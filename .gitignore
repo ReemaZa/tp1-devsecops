@@ -2,3 +2,4 @@ reports/
 odc-data/
 users.db
 __pycache__/
+.env

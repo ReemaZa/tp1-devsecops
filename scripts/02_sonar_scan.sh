@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Scan SonarQube. Usage : SONAR_TOKEN=xxxx ./scripts/02_sonar_scan.sh vulnerable
-# Linux : --network=host. Sur Windows/Mac, remplacer par SONAR_HOST_URL=http://host.docker.internal:9000
 DIR=${1:-vulnerable}
-docker run --rm --network=host \
-  -e SONAR_HOST_URL="http://localhost:9000" \
-  -e SONAR_TOKEN="$SONAR_TOKEN" \
+
+# Charge les variables du fichier .env (si présent)
+if [ -f .env ]; then set -a; source .env; set +a; fi
+
+docker run --rm \
+  -e SONAR_HOST_URL="http://host.docker.internal:9000" \
+  -e SONAR_TOKEN="${SONAR_TOKEN:?Définissez SONAR_TOKEN dans .env}" \
   -v "$(pwd):/usr/src" \
   sonarsource/sonar-scanner-cli \
   -Dsonar.projectKey="tp-devsecops-$DIR" \
