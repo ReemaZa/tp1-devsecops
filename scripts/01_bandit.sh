@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SAST avec Bandit via Docker. Usage : ./scripts/01_bandit.sh vulnerable   (ou : fixed)
+# SAST avec Bandit via Docker. 
 DIR=${1:-vulnerable}
 mkdir -p reports
 docker run --rm -v "$(pwd):/src" -w /src python:3.12-slim sh -c \

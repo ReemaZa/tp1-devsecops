@@ -3,6 +3,9 @@ MINI PORTAIL EMPLOYES - VERSION VOLONTAIREMENT VULNERABLE
 Chaque faille est signalée par un commentaire [FAILLE n].
 Pages : /  /login  /search  /ping  /load  /fetch
 """
+import os
+import re
+import secrets
 import sqlite3
 import subprocess
 import hashlib
@@ -12,9 +15,8 @@ from flask import Flask, request, render_template_string
 
 app = Flask(__name__)
 
-# [FAILLE 1] Secret codé en dur dans le code source (Bandit B105)
-SECRET_KEY = "super-secret-123"
-app.config["SECRET_KEY"] = SECRET_KEY
+# [CORRECTIF 1] Le secret vient d'une variable d'environnement, jamais du code
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 
 DB = "users.db"
 
