@@ -75,16 +75,15 @@ def login():
     if request.method == "POST":
         username = request.form.get("username", "")
         password = request.form.get("password", "")
-        pwd_hash = hashlib.md5(password.encode()).hexdigest()
         conn = sqlite3.connect(DB)
-        # [FAILLE 3] INJECTION SQL : requête construite par concaténation (Bandit B608)
-        # Attaque : utilisateur  admin' --   (mot de passe quelconque)
-        query = "SELECT * FROM users WHERE username = '%s' AND password = '%s'" % (username, pwd_hash)
-        row = conn.execute(query).fetchone()
+        # [CORRECTIF 3] Requête PARAMETREE : le « ? » fait traiter l'entrée comme une donnée
+        row = conn.execute("SELECT password FROM users WHERE username = ?", (username,)).fetchone()
         conn.close()
-        message = ("<p class='ok'>Connexion réussie. Bienvenue !</p>" if row
-                   else "<p class='ko'>Identifiants invalides.</p>")
-    return page("Connexion", form + message)
+        if row and check_password_hash(row[0], password):
+            message = "<p class='ok'>Connexion réussie. Bienvenue !</p>"
+        else:
+            message = "<p class='ko'>Identifiants invalides.</p>"
+    return render_template_string(page("Connexion", form + message))
 
 
 @app.route("/search")
