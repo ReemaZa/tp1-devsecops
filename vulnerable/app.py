@@ -12,6 +12,8 @@ import hashlib
 import yaml
 import requests
 from flask import Flask, request, render_template_string
+from werkzeug.security import generate_password_hash, check_password_hash
+
 
 app = Flask(__name__)
 
@@ -50,8 +52,8 @@ def init_db():
     """Crée la base SQLite avec un utilisateur admin / admin123."""
     conn = sqlite3.connect(DB)
     conn.execute("CREATE TABLE IF NOT EXISTS users (username TEXT, password TEXT)")
-    # [FAILLE 2] MD5 est un algorithme de hash cassé (Bandit B324)
-    pwd = hashlib.md5(b"admin123").hexdigest()
+    # [CORRECTIF 2] Hash salé et lent (PBKDF2/scrypt) au lieu de MD5
+    pwd = generate_password_hash("admin123")
     conn.execute("DELETE FROM users")
     conn.execute("INSERT INTO users VALUES ('admin', ?)", (pwd,))
     conn.commit()
