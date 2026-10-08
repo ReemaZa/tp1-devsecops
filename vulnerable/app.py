@@ -1,19 +1,20 @@
 """
-MINI PORTAIL EMPLOYES - VERSION VOLONTAIREMENT VULNERABLE 
-Chaque faille est signalée par un commentaire [FAILLE n].
-Pages : /  /login  /search  /ping  /load  /fetch
+MINI PORTAIL EMPLOYES - VERSION CORRIGEE
+Mêmes pages que la version vulnérable. Chaque correctif est signalé par [CORRECTIF n].
+Règle d'or : le contenu utilisateur passe TOUJOURS par une variable Jinja ({{ variable }}),
+qui l'échappe automatiquement, et jamais par une concaténation de texte.
 """
 import os
 import re
 import secrets
 import sqlite3
-import subprocess
-import hashlib
+import subprocess  # nosec B404 - utilisé de façon sécurisée (voir /ping)
+from urllib.parse import urlparse
+
 import yaml
 import requests
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, abort
 from werkzeug.security import generate_password_hash, check_password_hash
-
 
 app = Flask(__name__)
 
@@ -22,20 +23,15 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 
 DB = "users.db"
 
-# ---------------------------------------------------------------------------
-# Mise en page HTML commune à toutes les pages (simple : un en-tête + un pied)
-# ---------------------------------------------------------------------------
 HEAD = """<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><title>Portail Employés</title>
 <style>
   body { font-family: Arial, sans-serif; max-width: 720px; margin: 30px auto; padding: 0 15px; }
   nav a { margin-right: 14px; }
-  .warn { background: #ffe0e0; border: 1px solid #c00; padding: 8px; }
   .ok { color: green; } .ko { color: #c00; }
   input { padding: 6px; margin: 4px 0; } button { padding: 6px 12px; }
   pre { background: #f4f4f4; padding: 10px; }
 </style></head><body>
-<p class="warn">&#9888; Application VULNERABLE</p>
 <nav><a href="/">Accueil</a><a href="/login">Connexion</a><a href="/search">Recherche</a>
 <a href="/ping">Diagnostic réseau</a><a href="/load">Import config</a><a href="/fetch">Aperçu URL</a></nav>
 <hr>
@@ -44,12 +40,11 @@ FOOT = "</body></html>"
 
 
 def page(title, body):
-    """Assemble le HTML final : en-tête + titre + contenu + pied de page."""
+    """Assemble le HTML. Seuls des textes CONSTANTS sont concaténés ici (jamais d'entrée utilisateur)."""
     return HEAD + "<h1>" + title + "</h1>" + body + FOOT
 
 
 def init_db():
-    """Crée la base SQLite avec un utilisateur admin / admin123."""
     conn = sqlite3.connect(DB)
     conn.execute("CREATE TABLE IF NOT EXISTS users (username TEXT, password TEXT)")
     # [CORRECTIF 2] Hash salé et lent (PBKDF2/scrypt) au lieu de MD5
@@ -62,7 +57,8 @@ def init_db():
 
 @app.route("/")
 def index():
-    return page("Portail Employés", "<p>Bienvenue ! Utilisez le menu pour naviguer.</p>")
+    return render_template_string(
+        page("Portail Employés", "<p>Bienvenue ! Utilisez le menu pour naviguer.</p>"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -91,10 +87,13 @@ def search():
     q = request.args.get("q", "")
     form = """<form method="get"><input name="q" placeholder="Nom d'un employé">
               <button>Rechercher</button></form>"""
-    result = "<p>Résultats pour : %s</p><p>Aucun employé trouvé.</p>" % q if q else ""
-    # [FAILLE 4] XSS / SSTI : l'entrée utilisateur est insérée DANS le template
-    # Attaque : q = <script>alert(1)</script>   ou   q = {{7*7}}
-    return render_template_string(page("Recherche d'employés", form + result))
+    # [CORRECTIF 4] q est passé comme VARIABLE du template ({{ q }}) : Jinja2 l'échappe
+    result = "<p>Résultats pour : {{ q }}</p><p>Aucun employé trouvé.</p>" if q else ""
+    return render_template_string(page("Recherche d'employés", form + result), q=q)
+
+
+# Un nom d'hôte / une IP ne contient que ces caractères
+HOST_RE = re.compile(r"^[A-Za-z0-9.\-]{1,253}$")
 
 
 @app.route("/ping")
@@ -104,10 +103,14 @@ def ping():
     host = request.args.get("host", "")
     out = ""
     if host:
-        # [FAILLE 5] INJECTION DE COMMANDE : shell=True + entrée non validée (Bandit B602)
-        # Attaque : host = 127.0.0.1; cat /etc/passwd
-        out = "<pre>" + subprocess.check_output("ping -c 1 " + host, shell=True).decode() + "</pre>"
-    return page("Diagnostic réseau", form + out)
+        # [CORRECTIF 5] Liste blanche de caractères + pas de shell + arguments en liste + timeout
+        if not HOST_RE.match(host):
+            abort(400, "Hôte invalide")
+        result = subprocess.run(  # nosec B603 - arguments en liste, entrée validée par regex
+            ["ping", "-c", "1", host], capture_output=True, text=True, timeout=5, check=False)
+        out = "<pre>{{ out }}</pre>"
+        return render_template_string(page("Diagnostic réseau", form + out), out=result.stdout)
+    return render_template_string(page("Diagnostic réseau", form))
 
 
 @app.route("/load")
@@ -115,12 +118,12 @@ def load():
     form = """<form method="get"><input name="data" placeholder="clé: valeur" size="40">
               <button>Importer</button></form>"""
     data = request.args.get("data", "")
-    out = ""
     if data:
-        # [FAILLE 6] DESERIALISATION DANGEREUSE : yaml.load avec Loader complet (Bandit B506)
-        # Attaque : data = !!python/object/apply:os.system ["id"]
-        out = "<pre>" + str(yaml.load(data, Loader=yaml.Loader)) + "</pre>"
-    return page("Import de configuration YAML", form + out)
+        # [CORRECTIF 6] safe_load ne construit que des types simples (dict, list, str...)
+        parsed = str(yaml.safe_load(data))
+        return render_template_string(
+            page("Import de configuration YAML", form + "<pre>{{ out }}</pre>"), out=parsed)
+    return render_template_string(page("Import de configuration YAML", form))
 
 
 @app.route("/fetch")
@@ -128,15 +131,18 @@ def fetch():
     form = """<form method="get"><input name="url" placeholder="http://example.com" size="40">
               <button>Afficher</button></form>"""
     url = request.args.get("url", "")
-    out = ""
     if url:
-        # [FAILLE 7] SSRF (n'importe quelle URL, même interne) + pas de timeout (Bandit B113)
-        out = "<pre>" + requests.get(url).text[:500] + "</pre>"
-    return page("Aperçu d'une URL", form + out)
+        # [CORRECTIF 7] Schéma limité à http(s) + timeout
+        # (pour une protection SSRF complète : liste blanche de domaines, voir README)
+        if urlparse(url).scheme not in ("http", "https"):
+            abort(400, "URL invalide")
+        text = requests.get(url, timeout=5).text[:500]
+        return render_template_string(
+            page("Aperçu d'une URL", form + "<pre>{{ out }}</pre>"), out=text)
+    return render_template_string(page("Aperçu d'une URL", form))
 
 
 if __name__ == "__main__":
     init_db()
-    # [FAILLE 8] debug=True (console de debug = exécution de code à distance) + 0.0.0.0
-    # (Bandit B201 et B104)
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # [CORRECTIF 8] debug désactivé, hôte configurable (127.0.0.1 par défaut)
+    app.run(host=os.environ.get("APP_HOST", "127.0.0.1"), port=5000, debug=False)
